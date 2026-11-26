@@ -1,78 +1,126 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_AUDIT_API_URL || "";
-const USE_MOCK = !API_BASE_URL;
+﻿const API_BASE_URL = process.env.NEXT_PUBLIC_AUDIT_API_URL || "/api";
 
-const MOCK_LOGS = [
-  {
-    id: "AUD-1042",
-    timestamp: "2026-11-23T12:15:00Z",
-    actor: "admin@example.com",
-    role: "ADMIN",
-    action: "LICENSE_ISSUED",
-    resource: "ORG_1794991409454",
-    status: "SUCCESS",
-    details: "Issued RSA-2048 license with 365 days validity and 7 days grace.",
-    metadata: { modules: ["USER_MANAGEMENT", "AUDIT_LOGS"], validityDays: 365 }
-  },
-  {
-    id: "AUD-1041",
-    timestamp: "2026-11-23T11:50:12Z",
-    actor: "developer@example.com",
-    role: "DEVELOPER",
-    action: "POLICY_UPDATED",
-    resource: "AUDIT_RETENTION_POLICY",
-    status: "SUCCESS",
-    details: "Updated audit log retention window from 90 days to 180 days.",
-    metadata: { previousDays: 90, newDays: 180 }
-  },
-  {
-    id: "AUD-1040",
-    timestamp: "2026-11-23T11:22:45Z",
-    actor: "system-enforcer",
-    role: "SERVICE",
-    action: "SIGNATURE_CHECK",
-    resource: "license-enforcer-keda",
-    status: "FAILURE",
-    details: "Rejected license artifact due to signature mismatch (INVALID_SIGNATURE).",
-    metadata: { reason: "INVALID_SIGNATURE", actionRequired: "SCALE_TO_ZERO" }
-  },
-  {
-    id: "AUD-1039",
-    timestamp: "2026-11-23T10:05:30Z",
-    actor: "owner@example.com",
-    role: "OWNER",
-    action: "ROLE_ASSIGNED",
-    resource: "USER_test3",
-    status: "WARNING",
-    details: "Granted temporary elevated audit viewer permissions.",
-    metadata: { grantedRole: "AUDITOR", expiresInHours: 24 }
+const DEFAULT_SCOPE_CONTEXT =
+  process.env.NEXT_PUBLIC_AUDIT_SCOPE_CONTEXT ||
+  JSON.stringify([
+    { location: "HYD", product_name: "product1" },
+    { location: "Hyderabad", area: "CC1" },
+  ]);
+
+const DEFAULT_USER_ROLES =
+  process.env.NEXT_PUBLIC_AUDIT_USER_ROLES || "SUPER_ADMIN";
+
+function toEpochSeconds(dateTimeLocal) {
+  if (!dateTimeLocal) return null;
+  const ms = Date.parse(dateTimeLocal);
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
+}
+
+function normalizeTimestamp(raw) {
+  if (!raw) return new Date().toISOString();
+  const num = Number(raw);
+  if (!Number.isNaN(num)) {
+    return new Date(num < 1e12 ? num * 1000 : num).toISOString();
   }
-];
+  return String(raw);
+}
 
-export async function fetchAuditLogs({ search = "", status = "ALL", action = "ALL" } = {}) {
-  if (USE_MOCK) {
-    await new Promise((r) => setTimeout(r, 150));
-    return MOCK_LOGS.filter((log) => {
-      const matchesSearch =
-        !search ||
-        log.actor.toLowerCase().includes(search.toLowerCase()) ||
-        log.resource.toLowerCase().includes(search.toLowerCase()) ||
-        log.details.toLowerCase().includes(search.toLowerCase()) ||
-        log.id.toLowerCase().includes(search.toLowerCase());
-      const matchesStatus = status === "ALL" || log.status === status;
-      const matchesAction = action === "ALL" || log.action === action;
-      return matchesSearch && matchesStatus && matchesAction;
-    });
-  }
+function normalizeLog(item, index) {
+  const action = item.actionType || "UNKNOWN";
+  const isFailure = action === "FAILED" || action === "ERROR" || action === "REJECTED";
+  const isDelete = action === "DELETED";
 
+  return {
+    id: `${item.contextId || "LOG"}-${item.createdAt || index}`,
+    timestamp: normalizeTimestamp(item.createdAt),
+    createdAtRaw: item.createdAt,
+    userId: item.userId || "unknown",
+    actionType: action,
+    context: item.context || "GENERAL",
+    contextId: item.contextId || "-",
+    originalVal: item.originalVal ?? null,
+    changedVal: item.changedVal ?? null,
+    businessJustification: item.businessJustification || "",
+    badgeTone: isFailure ? "FAILURE" : isDelete ? "WARNING" : "SUCCESS",
+    raw: item,
+  };
+}
+
+export async function fetchAuditLogs({
+  search = "",
+  actionType = "ALL",
+  context = "",
+  contextId = "",
+  userId = "",
+  fromDate = "",
+  toDate = "",
+  page = 0,
+  size = 10,
+} = {}) {
   const params = new URLSearchParams();
-  if (search) params.set("search", search);
-  if (status !== "ALL") params.set("status", status);
-  if (action !== "ALL") params.set("action", action);
+  params.set("page", String(page));
+  params.set("size", String(size));
+
+  const fromCreatedAt = toEpochSeconds(fromDate);
+  const toCreatedAt = toEpochSeconds(toDate);
+
+  if (fromCreatedAt !== null) params.set("fromCreatedAt", String(fromCreatedAt));
+  if (toCreatedAt !== null) params.set("toCreatedAt", String(toCreatedAt));
+  if (actionType && actionType !== "ALL") params.set("actionType", actionType);
+  if (context.trim()) params.set("context", context.trim().toUpperCase());
+  if (contextId.trim()) params.set("contextId", contextId.trim());
+  if (userId.trim()) params.set("userId", userId.trim());
 
   const res = await fetch(`${API_BASE_URL}/audit-logs?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      "X-USER-SCOPE-CONTEXT": DEFAULT_SCOPE_CONTEXT,
+      "X-USER-ROLES": DEFAULT_USER_ROLES,
+    },
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(`Failed to fetch audit logs (${res.status})`);
+
+  const dataSource = res.headers.get("X-Audit-Data-Source") || "LIVE_BACKEND";
   const json = await res.json();
-  return Array.isArray(json) ? json : json.data || [];
+
+  if (!res.ok || json.status === "error") {
+    throw new Error(json.message || `Failed to fetch audit logs (${res.status})`);
+  }
+
+  const pageDto = json.data || json;
+  const rawRecords = Array.isArray(pageDto)
+    ? pageDto
+    : pageDto.records || pageDto.content || [];
+
+  let normalized = rawRecords.map(normalizeLog);
+
+  if (search.trim()) {
+    const q = search.toLowerCase();
+    normalized = normalized.filter(
+      (l) =>
+        l.userId.toLowerCase().includes(q) ||
+        l.context.toLowerCase().includes(q) ||
+        l.contextId.toLowerCase().includes(q) ||
+        l.businessJustification.toLowerCase().includes(q) ||
+        (l.originalVal || "").toLowerCase().includes(q) ||
+        (l.changedVal || "").toLowerCase().includes(q)
+    );
+  }
+
+  const totalElements =
+    typeof pageDto.total === "number" ? pageDto.total : normalized.length;
+  const totalPages =
+    typeof pageDto.totalPages === "number"
+      ? Math.max(1, pageDto.totalPages)
+      : Math.max(1, Math.ceil(totalElements / size));
+
+  return {
+    logs: normalized,
+    totalElements,
+    totalPages,
+    page: typeof pageDto.page === "number" ? pageDto.page : page,
+    size: typeof pageDto.size === "number" ? pageDto.size : size,
+    isMock: dataSource === "MOCK_FALLBACK",
+  };
 }
