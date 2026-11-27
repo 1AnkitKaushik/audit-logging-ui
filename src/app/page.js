@@ -334,26 +334,32 @@ export default function AuditLoggingPage() {
               onChange={(e) => setContextIdInput(e.target.value)}
               className="px-3.5 py-2 bg-slate-900/70 border border-slate-800 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
-            <input
-              type="datetime-local"
-              aria-label="From Created At"
-              value={fromDate}
-              onChange={(e) => {
-                setFromDate(e.target.value);
-                setPage(0);
-              }}
-              className="px-3.5 py-2 bg-slate-900/70 border border-slate-800 rounded-xl text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-            <input
-              type="datetime-local"
-              aria-label="To Created At"
-              value={toDate}
-              onChange={(e) => {
-                setToDate(e.target.value);
-                setPage(0);
-              }}
-              className="px-3.5 py-2 bg-slate-900/70 border border-slate-800 rounded-xl text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
+            <label className="flex min-w-0 items-center gap-1.5 px-3 py-2 bg-slate-900/70 border border-slate-800 rounded-xl text-xs text-slate-400 overflow-hidden focus-within:ring-2 focus-within:ring-emerald-500">
+              <span className="uppercase font-semibold text-slate-500">From</span>
+              <input
+                type="datetime-local"
+                aria-label="From Created At"
+                value={fromDate}
+                onChange={(e) => {
+                  setFromDate(e.target.value);
+                  setPage(0);
+                }}
+                className="min-w-0 flex-1 bg-transparent text-xs text-slate-200 focus:outline-none [color-scheme:dark]"
+              />
+            </label>
+            <label className="flex min-w-0 items-center gap-1.5 px-3 py-2 bg-slate-900/70 border border-slate-800 rounded-xl text-xs text-slate-400 overflow-hidden focus-within:ring-2 focus-within:ring-emerald-500">
+              <span className="uppercase font-semibold text-slate-500">To</span>
+              <input
+                type="datetime-local"
+                aria-label="To Created At"
+                value={toDate}
+                onChange={(e) => {
+                  setToDate(e.target.value);
+                  setPage(0);
+                }}
+                className="min-w-0 flex-1 bg-transparent text-xs text-slate-200 focus:outline-none [color-scheme:dark]"
+              />
+            </label>
           </div>
         </div>
 
@@ -506,3 +512,5 @@ export default function AuditLoggingPage() {
     </div>
   );
 }
+
+
